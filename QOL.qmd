@@ -1,0 +1,1398 @@
+---
+title: "Linear Regression Analysis"
+author: 
+- Siti Nurhafizah binti Saharudin (23202464),
+- Muamar Iskandar bin Mohamaed Yusoff (23202846),
+- Nur Fazlina binti Dzulkifli (23202967),
+- Yogeswary Mithra A/P Nandi Mithra (23202677)
+
+execute:
+  echo: false
+  message: false
+  warning: false
+format: 
+  html:
+    toc: true
+    toc-depth: 2
+    toc-location: left
+    toc-title: Contents
+    code-tools: true
+    code-fold: true
+    code-summary: "Show R code"
+editor: visual
+---
+
+```{r setup, include = FALSE}
+library(knitr)
+knitr::opts_chunk$set (echo = TRUE, 
+                       message = FALSE, 
+                       warning = FALSE)
+
+```
+
+# 1 PART A: Introduction and Data Generation
+
+## 1.1 Dataset / Simulation
+
+-   Quality of life is shaped by a combination of occupational, behavioural, and health-related factors. This analysis examines how working experience, physical activity, and obesity status are associated with quality of life (QOL) using linear regression on a simulated dataset.
+
+-   Simulation was used to create controlled, realistic data, allowing clear examination of regression effects, interaction terms, and model assumptions in a reproducible way.
+
+-   A dataset of 200 observations was generated in R (version 4.5.2). Years of working experience (0–40 years) and physical activity scores (0–10) were simulated as continuous variables, while obesity status was simulated as a binary categorical variable.
+
+-   Quality of life was generated as a continuous outcome based on a predefined linear model that included main effects of all predictors and an interaction between physical activity and obesity status.
+
+-   The model assumed positive effects of physical activity and working experience on quality of life, with obesity associated with lower baseline QOL and weaker benefits from physical activity. Influential observations were intentionally introduced to reflect realistic data behaviour and support regression diagnostics.
+
+-   Random error was added to reflect natural variability, and QOL values were constrained to a realistic range (0–100). A fixed random seed was used to ensure reproducibility.
+
+```{r}
+library(dplyr)
+#---------------------------------------------------
+# setting seed to ensure reproducible random data
+#---------------------------------------------------
+set.seed(123)
+
+#---------------------------------------------------
+# number of observations
+#---------------------------------------------------
+n <- 200
+
+#---------------------------------------------------
+# continuous covariates
+#---------------------------------------------------
+## uniform random between 0 and 40
+years_working <- runif(n, 0, 40)
+
+## uniform random between 0 and 10
+phys_activity <- runif(n, 0, 10) 
+
+#---------------------------------------------------
+# categorical covariate
+#---------------------------------------------------
+obesity <- sample(c("obese","not obese"), n, replace=TRUE)
+
+## Numeric code for obesity (0/1)
+obese_num <- ifelse(obesity=="obese", 1, 0)
+
+#---------------------------------------------------
+# define how qol depends on predictors, include main effects and an interaction between physical activity and obesity.
+#---------------------------------------------------
+## Coefficients for the linear model
+### intercept (baseline QOL)
+beta0 <- 50 
+
+### effect per year_working
+beta_years <- 0.6  
+
+### effect per unit phys_activity
+beta_phys <- 3.0  
+
+### effect if obese
+beta_obesity <- -8 
+
+### extra effect of phys_activity when obese
+beta_int <- -2.5 
+ 
+### random noise sd
+sd_noise <- 8       
+
+#----------------------------------------------------
+# Compute the “true” mean QOL (mu) including interaction
+#----------------------------------------------------
+##beta_int * phys_activity * obese_num adds extra slope for obese group.
+mu <- beta0 + beta_years*years_working + beta_phys*phys_activity +
+      beta_obesity*obese_num + beta_int*phys_activity*obese_num
+
+#----------------------------------------------------
+# Generate QOL with random normal noise
+#----------------------------------------------------
+qol <- rnorm(n, mean=mu, sd=sd_noise)
+
+#----------------------------------------------------
+# Assemble into a data frame
+#----------------------------------------------------
+df <- data.frame(qol, years_working, phys_activity, obesity)
+
+#----------------------------------------------------
+# Inject influential observation
+#----------------------------------------------------
+infl_idx <- sample(1:n, 6)
+
+df <- df |>
+  dplyr::mutate(
+    qol = replace(qol, infl_idx, c(95, 15, 90, 10, 5, 98)),
+    years_working = replace(years_working, infl_idx, c(40, 0, 39.5, 38.8, 1.0, 0.5)),
+    phys_activity = replace(phys_activity, infl_idx, c(0, 10, 9.8, 0.2, 9.9, 0.1)),
+    obesity = replace(obesity, infl_idx, c("obese", "not obese", "obese", "not obese", "obese", "not obese"))
+  )
+
+#-----------------------------------------------------
+#Shuffle rows
+#-----------------------------------------------------
+df <- df |> slice_sample(prop = 1)
+
+```
+
+## 1.2 Analysis Overview
+
+Following data generation, the analysis focused on examining the relationships between working experience, physical activity, obesity status, and quality of life using **linear regression techniques.**
+
+**Research questions:**
+
+1.  Is working experience associated with quality of life?
+2.  Is physical activity associated with quality of life?
+3.  Is obesity status independently associated with quality of life?
+4.  Does obesity status modify the association between physical activity and quality of life?
+
+**Objectives:**
+
+1.  To examine the association between working experience and quality of life.
+2.  To examine the association between physical activity and quality of life.
+3.  To assess the independent association between obesity status and quality of life.
+4.  To evaluate whether obesity status modifies the association between physical activity and quality of life.
+
+To address these objectives, exploratory data analysis and linear regression modelling and model with and without interaction terms were fitted and compared.
+
+## 1.3 Prepare Environment and Read Data
+
+### 1.3.1 Load Required Packages
+
+```{r, message = FALSE}
+# Data manipulation and workflow
+library(tidyverse)
+library(dplyr)
+
+# Data reporting & tables
+library(gtsummary)
+library(knitr)
+
+# Data visualisation
+library(ggplot2)
+library(corrplot)
+
+# Modelling and diagnostics
+library(MASS)
+
+# Model ouputs
+library(broom)
+library(broom.helpers)
+```
+
+### 1.3.2 Glimpse Dataset
+
+```{r}
+glimpse(df)
+```
+
+### 1.3.3 Transform Data
+
+```{r}
+# Convert obesity to factors with ordered levels
+df <- df |> 
+  mutate(obesity = factor(obesity, level = c("not obese", "obese")))
+
+glimpse(df)
+```
+
+The structure of the dataset was examined to confirm variable types and ensure suitability for subsequent analysis.
+
+# 2 PART B: Exploratory Data Analysis
+
+## 2.1 Summary Statistics
+
+**Table 1: Descriptive Summary of Study Variables**
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE}
+library(summarytools)
+print(dfSummary(df,
+                style = "multiline",
+                varnumbers = FALSE,
+                valid.col = FALSE
+                ),
+      method = "render")
+
+```
+
+Interpretation: The dataset included 200 observations with no missing values. Quality of life had a mean of 67.2 (SD = 16.9) and showed moderate variability, supporting its use as a continuous outcome. Years of working experience averaged 20.1 years (SD = 11.2) and spanned the full working lifespan. Physical activity had a mean score of 4.9 (SD = 3.0), indicating varied activity levels. Obesity status was relatively balanced, with 54.0% non-obese and 46.0% obese participants, allowing meaningful group comparisons.
+
+### 2.1.1 Descriptive Summary by Obesity Status
+
+```{r}
+tbl_summary(
+  df,
+  by = obesity,
+  label = list(qol ~ 'Quality of Life Score',
+               years_working ~ 'Working Experience (years)',
+               phys_activity ~ 'Physical Activity Score'),
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)")
+) |>
+  modify_header (label = "**Variable**",
+                 stat_1 ~ "**Not obese**<br><span style='font-weight:normal;'>n = {n}</span>",
+                 stat_2 ~ "**Obese**<br><span style='font-weight:normal;'>n = {n}</span>") |>
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Obesity Status**") |>
+  modify_caption(
+    "<span style = 'color:black; font-weight:bold'> Table 2: Descriptive Statistics Summary by Obesity Status</span>")
+```
+
+Interpretation: Participants who were not obese had a higher mean quality of life score (76 ± 15) compared with those who were obese (57 ± 13), indicating a substantial difference in overall well-being between the two groups. Working experience was similar across obesity status, with both groups averaging around 20 years, suggesting minimal confounding by work duration. Physical activity scores were comparable between groups, although slightly higher among obese individuals, indicating that differences in quality of life were not explained by physical activity levels alone.
+
+## 2.2 Visualisation of Dataset Distribution
+
+### 2.2.1 Continuous Variables Distribution
+
+#### 2.2.1.1 Histogram
+
+Histograms were used in EDA to assess the distribution and identify skewness and outliers in continuous variables.
+
+```{r, message = FALSE}
+df |>
+  pivot_longer(
+    cols = c(qol, years_working, phys_activity),
+    names_to = "variable",
+    values_to = "value"
+    ) |>
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 10, fill = "lightblue", color = "black") +
+  facet_wrap(~ variable, scales = "free") +
+  labs(
+    x = "Value",
+    y = "Frequency",
+    caption = "Figure 1: Distribution of Continuous Variables") +
+  theme(plot.caption = element_text(hjust = 0.0, face = "bold", size = 10),
+        axis.title.x = element_text(face = "bold", size = 9),
+        axis.title.y = element_text(face = "bold", size = 9))
+```
+
+Interpretation: Figure 1 shows the distributions of physical activity, quality of life (QOL), and years of working experience. Physical activity scores are spread across the full 0–10 range, indicating substantial variability in activity levels. QOL scores are approximately normally distributed with moderate spread, suggesting suitability for linear regression analysis. Years of working experience are evenly distributed across the working lifespan, with no strong skewness observed.
+
+Overall, the distributions show adequate variability and no extreme departures from normality, supporting their use as continuous predictors and outcome variables in subsequent regression analyses.
+
+#### 2.2.1.2 Box Plot
+
+Box plots were used in EDA to assess the distribution of continuous variables across obesity status.
+
+Box Plot for Quality of Life Score across Obesity Status
+
+```{r}
+df |>
+  pivot_longer(
+    cols = where(is.numeric),
+    names_to= "variable",
+    values_to = "value"
+  ) |>
+  ggplot(aes(obesity, value, fill = obesity)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~ variable, scales = "free_y") +
+  scale_fill_brewer(palette = "Set3") +
+  labs(
+    x = "Obesity Status",
+    y = "Value",
+    caption = "Figure 2: Distribution of Continous Variables by Obesity Status"
+  ) +
+  theme(plot.caption = element_text(hjust = 0.0, face = "bold", size = 10),
+        axis.title.x = element_text(face = "bold", size = 9),
+        axis.title.y = element_text(face = "bold", size = 9))
+
+```
+
+Interpretation: Figure 2 compares the distributions of physical activity, quality of life (QOL), and years of working experience by obesity status. Median physical activity levels are similar between obese and non-obese individuals, with overlapping interquartile ranges, indicating comparable activity patterns across groups. In contrast, QOL scores are consistently higher among non-obese individuals, with a clear separation in medians and lower values observed in the obese group, suggesting poorer overall well-being. Years of working experience show substantial overlap between groups, with only modest differences in central tendency, indicating that working experience is broadly comparable regardless of obesity status.
+
+The boxplots highlight obesity-related differences in quality of life, while physical activity and working experience appear less differentiated between groups.
+
+#### 2.2.1.3 Scatter Plot
+
+Scatter plots were used in EDA to visually explore the relationships between continuous variables.
+
+```{r, message = FALSE}
+library(patchwork)
+
+qol_years <- ggplot(df, aes(x = years_working, y = qol)) +
+  geom_point(color = "magenta", alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE,
+              color = "red", fill = scales::alpha("lightpink", 0.2)) +
+  theme(
+    plot.subtitle = element_text(face = "bold", size = 9),
+    axis.title.x = element_text(face = "bold", size = 9),
+    axis.title.y = element_text(face = "bold", size = 9)) +
+  labs(subtitle = "Quality of Life Score vs \nWorking Experience in years",
+       x = "Working Experience in years",
+       y = "Quality of Life Score")
+
+qol_phys <- ggplot(df, aes(x = phys_activity, y = qol)) +
+  geom_point(color = "darkgreen", alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE,
+              color = "green", fill = scales::alpha("lightgreen", 0.2)) +
+  theme(
+    plot.subtitle = element_text(face = "bold", size = 9),
+    axis.title.x = element_text(face = "bold", size = 9),
+    axis.title.y = element_text(face = "bold", size = 9)) +
+  labs(subtitle = "Quality of Life Score vs \nPhysical Activity Score",
+       x = "Physical Activity Score",
+       y = "Quality of Life Score")
+
+years_phys <- ggplot(df, aes(x = phys_activity, y = years_working)) +
+  geom_point(color = "darkblue", alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE,
+              color = "blue", fill = scales::alpha("skyblue", 0.2)) +
+  theme(
+    plot.subtitle = element_text(face = "bold", size = 9),
+    axis.title.x = element_text(face = "bold", size = 9),
+    axis.title.y = element_text(face = "bold", size = 9))+
+  labs(subtitle = "Working Experience in years vs \nPhysical Activity Score",
+       x = "Physical Activity Score",
+       y = "Working Experience in years")
+
+# Combine scatter plots with patchwork
+(qol_years + qol_phys + years_phys) + 
+  plot_layout(ncol = 3) +
+  plot_annotation(
+    caption = "Figure 3: Scatter plots showing relationship between continuous variables",
+    theme = theme(
+      plot.caption = element_text(hjust = 0.0, face = "bold", size = 10))) 
+
+```
+
+**Figure 3: Scatter plots showing relationship between continuous variables**
+
+Interpretation: Figure 3 illustrates the relationships between quality of life (QOL), working experience, and physical activity. QOL shows a positive linear association with years of working experience, indicating that individuals with longer work experience tend to report higher QOL scores. A similar positive relationship is observed between physical activity and QOL, suggesting that higher activity levels are associated with better quality of life.
+
+In contrast, the relationship between physical activity and years of working experience appears weak, with a near-flat fitted line and substantial scatter, indicating little evidence of a linear association between these two variables.
+
+The scatter plots support the assumption of linear relationships between QOL and both working experience and physical activity, while suggesting independence between working experience and physical activity.
+
+#### 2.2.1.4 Bar Plot
+
+Bar plots are used in EDA to summarise and compare frequencies or proportions of categorical variables.
+
+Bar Plot for Obesity Status
+
+```{r}
+ggplot(df, aes(x = obesity, fill = obesity)) +
+  geom_bar(width = 0.4) +
+  theme(
+    axis.title.x = element_text(face = "bold", size = 9),
+    axis.title.y = element_text(face = "bold", size = 9)) +
+  labs(caption = "Figure 4: Distribution of Obesity Status",
+       x = "Obesity Status",
+       y = "Count") +
+  scale_fill_brewer(palette = "Set3") +
+  theme(plot.caption = element_text(hjust = 0.0, face = "bold", size = 10))
+```
+
+Interpretation: The dataset consisted of comparable numbers of obese and non-obese individuals, indicating a reasonably balanced distribution across obesity status.
+
+## 2.3 Correlation Matrix for Continuous Variables
+
+Correlation matrix was used to examine bivariate relationships and assess potential multicollinearity. This steps serves as an initial screening, as multicollinearity will be formally assessed using variance inflation factors during model diagnostics.
+
+```{r}
+# Select continuous variables
+df2 <- df |> 
+  dplyr::select(qol, years_working, phys_activity)
+
+# Compute correlation matrix
+cor.data <- 
+  cor(df2,
+      use = "complete.obs", 
+      method = "pearson")
+head(round(cor.data,2))
+```
+
+Here is the correlogram to visually summarise the strength and direction of associations among continuous variables, complementing the numeric correlation matrix.
+
+```{r}
+# Build correlogram
+cor_matrix <- cor(df |> select_if(is.numeric), use = "complete.obs")
+corrplot(cor_matrix,
+         type = "upper",
+         method = "circle",
+         addCoef.col = "black",
+         tl.col = "black",
+         tl.srt = 45)
+
+mtext(
+  "Figure 5: Correlogram for continuous variables",
+  side = 1,
+  line = 3,
+  adj = 0,
+  cex = 0.9,
+  font = 2
+)
+```
+
+Interpretation: The correlation matrix shows that quality of life (QOL) is moderately positively correlated with years of working experience (r = 0.36) and weakly positively correlated with physical activity (r = 0.21). This indicates that higher working experience and greater physical activity are both associated with higher QOL.
+
+In contrast, years of working experience and physical activity show negligible correlation (r = −0.06), suggesting that these predictors are largely independent of each other. Overall, the correlations indicate no evidence of strong multicollinearity among the predictors, supporting their simultaneous inclusion in the regression model.
+
+## 2.4 Exploratory Data Analysis Summary
+
+Exploratory analyses indicated that quality of life was generally higher among non-obese individuals and increased with both working experience and physical activity. Visualisations suggested approximately linear relationships between continuous predictors and quality of life, with no extreme departures from distributional assumptions. These findings supported the suitability of linear regression modelling and informed subsequent model specification.
+
+# 3 PART C: Regression Analysis
+
+## 3.1 Univariable Linear Regression Analysis
+
+Univariable linear regression analyses were conducted to examine the association between each independent variable and Quality of Life Score. Working experience in years, physical activity scoe and obesity status were analysed individually.
+
+### 3.1.1 Working Experience in years
+
+```{r}
+slr.years <- lm(qol ~ years_working, data = df)
+
+tidy(slr.years, conf.int = TRUE) |> 
+  mutate(p.value = format.pval(p.value, digits = 2, eps = 0.001))
+
+```
+
+```{r}
+glance(slr.years)
+```
+
+Interpretation: In the univariable linear regression model, years of working experience was significantly associated with quality of life. Each additional year of working experience was associated with an average increase of 0.54 points in quality of life (p-value \<0.001, 95% CI: 0.34–0.74). The intercept represents the expected quality of life score for individuals with zero years of working experience (QOL = 56.2 (95% CI: 51.7, 60.8)).
+
+The model explains approximately 13.0% of the variance in QOL (R² = 0.130; adjusted R² = 0.125), indicating a modest explanatory power. The overall model fit is statistically significant (F = 29.52, p \< 0.001), confirming that working experience is a meaningful predictor of QOL, although a substantial proportion of variability remains unexplained by this single predictor.
+
+### 3.1.2 Physical Activity Score
+
+```{r}
+slr.pa <- lm(qol ~ phys_activity, data = df)
+
+tidy(slr.pa, conf.int = TRUE) |> 
+  mutate(p.value = format.pval(p.value, digits = 2, eps = 0.001))
+```
+
+```{r}
+glance(slr.pa)
+```
+
+Interpretation: Physical activity score was significantly associated with quality of life. Each one-unit increase in physical activity score was associated with an average increase of 1.16 points in quality of life (p \< 0.001, 95% CI: 0.39–1.94). The intercept suggests that individuals with a physical activity score of zero have an estimated mean QOL of 61.5 (95% CI: 57.0 to 65.9).
+
+The model explains approximately 4.2% of the variance in QOL (R² = 0.042; adjusted R² = 0.037), indicating a limited explanatory power. Although the overall model is statistically significant (F = 8.7, p \< 0.001), most variability in QOL remains unexplained by physical activity alone, supporting the need for multivariable modelling.
+
+### 3.1.3 Obesity Status
+
+```{r}
+slr.obese <- lm(qol ~ obesity, data = df)
+
+tidy(slr.obese, conf.int = TRUE) |> 
+  mutate(p.value = format.pval(p.value, digits = 2, eps = 0.001))
+```
+
+```{r}
+glance(slr.obese)
+```
+
+Interpretation: The simple linear regression model shows a strong and statistically significant association between obesity status and quality of life (QOL). Compared with non-obese individuals, those who are obese have, on average, 18.51 points lower QOL scores (95% CI: −22.48 to −14.54, p \< 0.001). The intercept indicates that non-obese individuals have an estimated mean QOL of 75.7 (95% CI: 73.0 to 78.4).
+
+The model explains a substantial proportion of variability in QOL (R² = 0.299; adjusted R² = 0.296), indicating that obesity status alone accounts for nearly half of the observed variation. The overall model fit is highly significant (F = 84.52, p \< 0.001), highlighting obesity status as a strong predictor of quality of life.
+
+### 3.1.4 Univariable Summary Table
+
+```{r}
+#| tbl-cap: "Table 3: Summary Table of Univariable Regresion Model"
+
+
+tbl_univ <- gtsummary::tbl_uvregression(
+  df,
+  method = lm,
+  y = qol,
+  include = c(years_working, phys_activity, obesity),
+  label = list(years_working ~ "Working Experience in years",
+               phys_activity ~ "Physical Activity Score",
+               obesity ~ "Obesity Status")
+  ) |>
+  modify_fmt_fun(
+    estimate ~ function(x) style_number(x, digits = 2),
+    conf.low ~ function(x) style_number(x, digits = 2),
+    conf.high ~ function(x) style_number(x, digits = 2)
+  ) |>
+  gtsummary::bold_p() |>
+  modify_caption(
+    "<span style = 'color:black; font-weight:bold'> Table 3: Summary Table of Univariable Regresion Model</span>")
+
+tbl_univ
+```
+
+Interpretation: Univariable linear regression analyses demonstrated that working experience and physical activity were both positively associated with quality of life, while obesity status was negatively associated with quality of life. Each additional year of working experience was associated with a 0.54-point increase in quality of life, and each one-unit increase in physical activity score was associated with a 1.16-point increase in quality of life. In contrast, obese individuals had significantly lower quality of life scores compared with non-obese individuals, with an average difference of −18.50 points. All associations were statistically significant (p \< 0.001), supporting inclusion of these variables in subsequent multivariable regression models.
+
+## 3.2 Multivariable Linear Regression Analysis
+
+### 3.2.1 Model 1: Model with main effects only
+
+```{r}
+m1 <- lm(qol ~ years_working + phys_activity + obesity, data = df)
+tidy(m1, conf.int = TRUE) |>
+  mutate(p.value = format.pval(p.value, digits = 2, eps = 0.001))
+```
+
+Interpretation: In the adjusted model, years of working experience and physical activity were both positively associated with quality of life (QOL). Each additional year of working experience was associated with a 0.59-point increase in QOL, while each one-unit increase in physical activity was associated with a 1.52-point increase, holding other variables constant. In contrast, obesity remained strongly associated with lower QOL, with obese individuals reporting 19.5 points lower QOL compared with non-obese individuals after adjustment.
+
+The findings indicate that working experience and physical activity independently contribute to higher quality of life, whereas obesity is a major determinant of poorer QOL.
+
+### 3.2.2 Model 2: Model with inclusion of interation between physical activity score and obesity
+
+```{r}
+m2 <- lm(qol ~ years_working + phys_activity + obesity + phys_activity * obesity, data = df)
+tidy(m2, conf.int = TRUE) |>
+  mutate(p.value = format.pval(p.value, digits = 2, eps = 0.001))
+```
+
+Interpretation: The findings indicate that quality of life (QOL) is significantly influenced by working experience, physical activity, and obesity status. Longer working experience was associated with higher QOL, with an estimated increase of 0.57 points per additional year (95% CI: 0.43–0.72, p \< 0.001). Physical activity was likewise positively associated with QOL. However, this relationship varied according to obesity status.
+
+Among non-obese individuals, each unit increase in physical activity was associated with a 2.51-point improvement in QOL (95% CI: 1.73–3.28, p \< 0.001). In contrast, obesity was associated with a significantly lower baseline QOL, with obese individuals scoring 9.82 points lower than their non-obese counterparts after adjustment (95% CI: −16.10 to −3.55, p = 0.002). The significant interaction between physical activity and obesity status indicates that, compared with non-obese individuals, the positive effect of physical activity on quality of life is reduced by approximately 1.95 points per unit increase in physical activity among obese individuals (95% CI: −3.04 to −0.87, p \< 0.001).
+
+The results highlight obesity as both an independent predictor of poorer quality of life and an important modifier of the relationship between physical activity and well-being.
+
+### 3.2.3 Model Comparison
+
+To evaluate whether inclusion of an interaction between physical activity and obesity status improved model performance, Model 1 (main effects only) and Model 2 (including the interaction term) were formally compared.
+
+Model comparison was primarily conducted using ANOVA for nested linear models. Model fit was further evaluated using goodness-of-fit and model selection measures that account for model complexity, including coefficient of determination $(R^2)$, adjusted $R^2$ and the Akaike Information Criterion (AIC).
+
+#### 3.2.3.1 Analysis of Variance (ANOVA) for nested linear models
+
+```{r}
+mod_compare <- anova(m1, m2)
+
+mod_compare_tidy <- tidy(mod_compare) |>
+  mutate(Model = case_when(
+           term == "qol ~ years_working + phys_activity + obesity" ~ "Model 1: Main effects",
+           term == "qol ~ years_working + phys_activity + obesity + phys_activity * obesity" ~ "Model 2: Interaction model"),
+         p.value = format.pval(p.value, digits = 2, eps = 0.001)
+         ) |>
+  dplyr::select(Model, df.residual, rss, df, sumsq, statistic, p.value)
+
+mod_compare_tidy
+```
+
+Interpretation: The comparison between the main-effects model and the interaction model shows that adding the interaction term significantly improves model fit. The residual sum of squares (RSS) decreased from 27864.60 in the main-effects model to 26183.07 in the interaction model, indicating better explanatory power. This improvement is statistically significant (F = 12.52, p \< 0.001), demonstrating that the interaction term explains additional variation in quality of life beyond the main effects alone.
+
+The results support inclusion of the interaction term in the final regression model.
+
+#### 3.2.3.2 Goodness-of-fit and model selection measures
+
+```{r}
+model_fit <- bind_rows(
+  glance(m1) |> mutate(Model = "Model 1: Main effects"),
+  glance(m2) |> mutate(Model = "Model 2: Interaction model")
+  ) |>
+  dplyr::select(Model, r.squared, adj.r.squared, AIC, sigma, nobs)
+
+model_fit
+
+```
+
+Interpretation: Comparison of goodness-of-fit statistics indicates that Model 2, which includes the interaction between physical activity and obesity status, provides a better fit to the data than Model 1. Model 2 demonstrated higher $𝑅^2$ (0.540 vs 0.510) and adjusted $R^2$ (0.531 vs 0.503) indicating improved explanatory power after accounting for model complexity. In addition, Model 2 yielded a lower Akaike Information Criterion (AIC = 1554.49) compared to Model 1 (AIC = 1564.93), further supporting improved model performance. The residual standard deviation (sigma) was also slightly lower for Model 2, suggesting reduced unexplained variability. Taken together, these results support selection of the interaction model as the preferred final model.
+
+#### 3.2.3.3 Using Performance Package
+
+```{r}
+library(performance)
+compare_performance(m1, m2, rank = TRUE)
+```
+
+Interpretation: Comparison of model performance shows that model 2 consistently outperforms model 11. Model 2 demonstrates higher explanatory power (R² = 0.540; adjusted R² = 0.531 vs 0.510 and 0.503) and improved predictive accuracy, as indicated by lower RMSE (11.44 vs 11.80) and residual standard deviation (σ = 11.59 vs 11.92). Information-theoretic criteria strongly favour model 2, with AIC, AICc, and BIC weights exceeding 0.97. These results indicate that inclusion of the interaction term meaningfully improves model fit, supporting selection of Model m2 as the final model.
+
+1.2.4 Preliminary Final Model
+
+Based on the results of the nested model comparison and goodness-of-fit assessment, model 2, which includes the interaction between physical activity and obesity status, demonstrated superior performance compared to the main-effects model. Therefore, **model 2 was selected as the preliminary final model** and was subsequently subjected to formal diagnostic evaluation to assess compliance with linear regression assumptions.
+
+```{r}
+prelim_m <- tbl_regression(
+    m2,
+    intercept = TRUE,
+    conf.level = 0.95,
+    pvalue_fun = ~style_pvalue(.x, digits = 3, eps = 0.001),
+    label = list(years_working ~ "Working Experience in years",
+                 phys_activity ~ "Physical Activity Score",
+                 obesity ~ "Obesity Status"),
+    estimate_fun = ~style_number(.x, digits = 2),
+    ) |>
+    add_glance_table(
+        include = c(r.squared, adj.r.squared, AIC, nobs)) |>
+  modify_caption(
+    "<span style = 'color:black; font-weight: bold;'> Table 4: Preliminary Final Model with Fit Statistics")
+
+prelim_m
+```
+
+Interpretation: The preliminary final model indicated statistically significant associations between quality of life and years of working experience, physical activity, obesity status, and their interaction. However, formal interpretation of effect estimates was reserved until completion of model diagnostic checks.
+
+# 4 PART D: Model Checking
+
+The preliminary final model was evaluated to assess compliance with the assumptions of linear regression. Diagnostic procedures focused on linearity, normality of residuals, homoscedasticity, independence of errors, and the presence of influential observations.
+
+## 4.1 Check Assumptions
+
+### 4.1.1 Assumption 1: Linearity of the relationship between predictors and residuals
+
+#### 4.1.1.1 Overall linearity
+
+Linearity was assessed using the residuals-versus-fitted values plot.
+
+```{r}
+#Residuals vs Fitted plot
+par(mar = c(8,4,4,2))
+plot(m2, which = 1)
+
+mtext(
+  "Figure 6: Residuals vs Fitted Plot",
+  side = 1, 
+  line = 5.5,
+  adj = 0,
+  cex = 0.9,
+  font = 2
+)
+```
+
+Interpretation: The residuals are randomly scattered around the zero line across the range of fitted values, with no clear systematic pattern or curvature. This suggests that the assumption of linearity is reasonably satisfied for the preliminary final model. A small number of observations exhibited larger residuals (observation: 89, 103, 117) however, no systematic structure was evident, and these points were further evaluated in subsequent influence diagnostics.
+
+#### 4.1.1.2 Linearity of each continuous predictors
+
+Although the residuals-versus-fitted plot suggested that the overall linearity assumption was satisfied, residuals were also examined against each continuous predictor to ensure that their individual linear functional forms were appropriate.
+
+```{r, message = FALSE}
+library(gridExtra)
+library(grid)
+
+# Residuals vs working experience in years
+plot_margin <- theme(
+  plot.margin = margin(10, 10, 7, 10)
+)
+
+p1 <- augment(m2) |>
+  ggplot(aes(x = years_working, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  theme(
+    plot.subtitle = element_text(hjust = 0.0, face = "bold", size = 9),
+    axis.title.x = element_text(face = "bold", size = 8),
+    axis.title.y = element_text(face = "bold", size = 8)) +
+  labs(subtitle = "Residuals vs Years Working",
+       x = "Years Working",
+       y = "Residuals") +
+  plot_margin
+
+# Residuals vs physical activity score
+p2 <- augment(m2) |>
+  ggplot(aes(x = phys_activity, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red") +
+  theme(plot.subtitle = element_text(hjust = 0.0, face = "bold", size = 9),
+        axis.title.x = element_text(face = "bold", size = 8),
+        axis.title.y = element_text(face = "bold", size = 8)) +
+  labs(subtitle = "Residuals vs Physical Activity",
+       x = "Physical Activity",
+       y = "Residuals") +
+  plot_margin
+
+caption <- textGrob(
+  "Figure 7: Residual vs Predictor Plots", 
+  x = 0, 
+  y = 1,
+  hjust = 0, 
+  vjust = 1,
+  gp = gpar(fontsize = 10, fontface = "bold")
+)
+
+grid.arrange (p1,p2, caption,
+              ncol = 2,
+              heights = c(10, 0.2, 0.5))
+
+```
+
+Interpretation: The residual plots against years of working experience and physical activity show a random scatter of points around zero, with no evident systematic patterns. This suggests that the linearity assumption is reasonably met for both predictors. The spread of residuals appears relatively constant across the range of values, indicating no strong evidence of heteroscedasticity.
+
+Although a small number of extreme residuals are present, these do not follow a structured trend and are unlikely to materially affect model estimates. Overall, the plots support the adequacy of the linear regression model.
+
+### 4.1.2 Assumption 2: Normality of residuals
+
+Normality of residuals was assessed visually using a normal Q–Q plot and histogram with supplementary evaluation using the Shapiro-Wilk test
+
+```{r}
+par(mfrow = c(1, 2),
+    cex.lab = 1,       
+    font.lab = 2,       
+    cex.axis = 0.9,     
+    cex.main = 1,      
+    font.main = 2,
+    mar = c(4, 4, 3, 1),
+    oma = c(3, 0, 0, 0))
+
+data.res <- augment(m2)
+
+plot(m2, which = 2)
+
+hist(data.res$.resid, 
+     main = "Histogram of Residuals",
+     xlab = "Residuals",
+     col = "steelblue",
+     border = "black") 
+
+mtext(
+  "Figure 8: Q–Q Residuals and Histogram of Residuals",
+  side = 1,
+  line = 1.5,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2
+)
+
+
+```
+
+```{r}
+shapiro.test(m2$residuals)
+```
+
+Interpretation: The Q–Q plot indicates that the residuals closely follow the theoretical normal line in the central region, suggesting approximate normality around the mean. However, deviations are evident in the tails, with a small number of extreme residuals, indicating mild departures from normality. The histogram further supports this observation, showing an approximately symmetric distribution with slightly heavier tails.
+
+The Shapiro–Wilk test provides statistical evidence against strict normality (W = 0.966, p \< 0.001). Given the moderate sample size, this result likely reflects sensitivity to minor tail deviations rather than a substantive violation of the normality assumption.While the normality assumption is not perfectly satisfied, the residual distribution is sufficiently close to normal for linear regression inference, and the model is considered robust to the observed deviations.
+
+### 4.1.3 Assumption 3: Homoscedasticity (constant variance of residuals)
+
+#### 4.1.3.1 Visual diagnostics
+
+Homoscedasticity was assessed by visual inspection of residuals versus fitted values and scale–location plots.
+
+```{r}
+par(mfrow = c(1, 2),
+    cex.lab = 1,       
+    font.lab = 2,       
+    cex.axis = 0.9,     
+    cex.main = 1,      
+    font.main = 2,
+    mar = c(4, 4, 3, 1),
+    oma = c(3, 0, 0, 0))
+
+plot(m2, which = c(1, 3))
+
+mtext(
+  "Figure 9: Residuals vs Fitted and Scale-Location Plots",
+  side = 1,
+  line = 1.5,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2
+)
+
+```
+
+Interpretation: The residuals versus fitted values plot shows that residuals are generally scattered randomly around zero, with no strong systematic pattern, indicating that the linearity assumption is reasonably satisfied. A small number of observations exhibit large residuals and are flagged as potentially influential. However, these do not form a consistent trend across fitted values.
+
+The scale–location plot shows a relatively constant spread of standardized residuals across the range of fitted values, with the smoothing line remaining approximately horizontal. This suggests no strong evidence of heteroscedasticity, although minor deviations are observed at lower fitted values.
+
+The diagnostic plots indicate that the assumptions of linearity and homoscedasticity are largely met, and the regression model appears adequate despite the presence of a few influential observations.
+
+#### 4.3.1.2 Breusch-Pagan test
+
+Homoscedasticity was primarily assessed using graphical diagnostics, including residuals versus fitted values and scale–location plots. In addition, the Breusch–Pagan test was conducted as a formal statistical assessment to evaluate whether the variance of residuals was systematically associated with the predictors in the model.
+
+```{r}
+library(lmtest)
+
+bptest(m2)
+```
+
+Interpretation: The studentized Breusch–Pagan test yielded a non-significant result (BP = 1.74, df = 4, p = 0.784), indicating no strong evidence of heteroscedasticity in the regression model. This suggests that the variance of the residuals is approximately constant across levels of the fitted values and predictors. Therefore, the homoscedasticity assumption of linear regression is reasonably satisfied.
+
+### 4.1.4 Assumption 4: Independence
+
+Independence of residuals was evaluated using visual diagnostic plots, autocorrelation function (ACF) plots, and the Durbin–Watson test (1)(2).
+
+#### 4.1.4.1 Visual diagnostics
+
+```{r}
+par(mar = c(4,3,3,1),
+    oma = c(3,0,0,0))
+
+plot(residuals(m2), type = "o",
+     main = "Residuals vs Index",
+     xlab = "Index",
+     ylab = "Residuals", 
+     font.main = 2,
+     cex.main = 1)
+
+abline(h = 0, col = "red", lty = 2)
+
+mtext(
+  "Figure 10: Residuals vs Index",
+  side = 1,
+  line = 1,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2
+)
+
+```
+
+Interpretation: The residuals plotted against observation order fluctuate randomly around zero, with no visible systematic trend, cyclical pattern, or prolonged clustering of positive or negative values. This suggests that the residuals are independent across observations and that there is no strong evidence of serial correlation.
+
+Although a few large residuals are observed, these appear isolated and do not form sustained patterns over time. The plot supports the assumption of residual independence in the regression model.
+
+#### 4.1.4.2 Autocorrelation Function (ACF) plot
+
+```{r}
+par(mar = c(4,3,3,1),
+    oma = c(3,0,0,0))
+
+acf(data.res$.resid, main = "ACF of Residuals")
+
+mtext(
+  "Figure 11: Autocorrelation Function (ACF) of Model Residuals",
+  side = 1,
+  line = 1,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2
+)
+```
+
+Interpretation: The autocorrelation function (ACF) plot shows that all residual autocorrelation coefficients, apart from lag 0, lie within the 95% confidence bounds. This indicates no significant autocorrelation at any lag and suggests that the residuals are independent across observations.
+
+The ACF results support the assumption of residual independence and indicate that serial correlation is not a concern in the fitted regression model.
+
+#### 4.1.4.3 Durbin-Watson Test
+
+```{r}
+library(lmtest)
+dwtest(m2)
+```
+
+Interpretation: The Durbin–Watson test yielded a statistic of 2.07 with a non-significant p-value (p = 0.6939), indicating no evidence of positive autocorrelation in the residuals. The value being close to 2 suggests that residuals are approximately independent. This result supports the assumption of residual independence in the regression model.
+
+#### 4.1.4.4 Check Multicollinearity
+
+Multicollinearity was assessed using variance inflation factors (VIFs) to ensure that regression coefficients were not distorted by strong correlations among predictors. In models that include interaction terms, assessing multicollinearity is particularly important because interaction terms are mathematically related to their main effects and may increase variance inflation. Evaluating VIF values ensures that any observed associations are not artefacts of redundant information among predictors and that the estimated effects can be interpreted with confidence.
+
+```{r}
+library(car)
+vif(m2)
+```
+
+Interpretation: The VIF values for years of working experience (VIF = 1.01) and physical activity (VIF = 2.04) indicate minimal collinearity, suggesting that these predictors are largely independent of one another. The VIF for obesity status (VIF = 3.75) indicates moderate collinearity but remains below commonly used thresholds of concern (VIF \> 5 or 10).
+
+The interaction term (physical activity × obesity) shows a higher VIF (VIF = 5.01). This is typical in models that include interaction terms, as interactions are inherently correlated with their constituent main effects. Importantly, this value remains within an acceptable range and does not indicate problematic multicollinearity.
+
+## 4.2 Check Influentials
+
+We used three diagnostic criteria to identify potentially influential observations:
+
+1.  Cook’s Distance.
+
+-   Threshold: values above 1, or above $$\frac{4}{n}$$
+
+2.  Standardized Residuals
+
+-   Threshold: values greater than 2 or less than −2
+
+3.  Leverage Threshold: values above $$(2k+2)/n$$
+
+Where:
+
+$n$ = number of observations
+
+$k$ = number of predictors in the model
+
+These thresholds help flag data points that may disproportionately influence model estimates or distort inference.
+
+### 4.2.1 Cook's distance
+
+#### 4.2.1.1 Identify influential observations and cook's cutoff point
+
+```{r}
+# Add diagnostics columns
+df.inf <- augment(m2, df)
+
+# Define thresholds
+n_obs <- nrow(df)
+p_preds <- length(coef(m2))
+cooks_cutoff <- 4 / n_obs
+leverage_cutoff <- (2 * p_preds + 2) / n_obs
+
+# Filter Influential Observations
+influential_obs <- df.inf %>%
+  filter(.cooksd > cooks_cutoff | abs(.std.resid) > 2 | .hat > leverage_cutoff) 
+
+# Print count
+cat("Number of influential observation:", nrow(influential_obs), "\n")
+
+cat("Cook's distance cutoff:", round(cooks_cutoff, 4), "\n")
+```
+
+We identify 9 potential influence observations with Cook's distance greater than the cutoff value of 0.02 $$(\frac{4}{n})$$ that may warrant further investigation.
+
+#### 4.2.1.2 Cook's distance plot
+
+A Cook’s distance plot was used to visually identify potentially influential observations and to evaluate whether influence was driven by isolated cases or broadly distributed across the dataset.
+
+```{r}
+par(mar = c(4,2,2,1),
+    oma = c(5,0,0,0))
+
+plot(m2, which = 4)
+
+mtext(
+  "Figure 12: Cook's Distance Plot",
+  side = 1,
+  line = 2,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2)
+```
+
+Interpretation: The Cook’s distance plot shows that while a few observations have moderately higher influence (e.g. 89, 103, 117), no single case exerts excessive leverage on the model (Threshold values \> 1). However, the 3 points with highest Cook's distance was further assessed to see whether it fulfills the other diagnostic criteria to be considered as influential observation.
+
+### 4.2.2 Leverage and standardized residuals
+
+Following the assessment of Cook’s distance, standardized residuals and leverage values were examined to better understand the source of potential influence. Standardized residuals were used to identify observations with unusually large deviations from the fitted values, while leverage values were assessed to detect observations with extreme predictor combinations.
+
+Residuals vs leverage plot
+
+```{r}
+par(mar = c(5,4,4,2),
+    oma = c(3,0,0,0))
+
+plot(m2, which = 5)
+
+mtext(
+  "Figure 13: Residuals vs Leverage Plot",
+  side = 1,
+  line = 1,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2)
+
+```
+
+Interpretation: The residuals versus leverage plot shows that most observations have low to moderate leverage and standardized residuals clustered around zero. A small number of observations are identified as having relatively higher leverage and larger residuals. However, these points remain within the Cook’s distance boundaries, indicating that they are not unduly influential on the fitted model. The plot suggests that no single observation exerts excessive influence on the regression estimates. The model therefore appears robust to the presence of a few high-leverage points.
+
+```{r}
+df.inf <- df.inf |> 
+  dplyr::mutate(obs_id = row_number())
+
+top10_influential <- df.inf |>
+  arrange(desc(.cooksd), desc(abs(.std.resid))) |>
+  slice(1:10)
+
+top10_influential |>
+  dplyr::select(
+    obs_id,
+    qol,
+    years_working,
+    phys_activity,
+    obesity,
+    .cooksd,
+    .hat,
+    .std.resid
+  )
+  
+```
+
+Interpretation: The table presents the top 10 observations ranked by Cook’s distance, highlighting cases with relatively higher influence on the regression model. Observation 103 shows the largest Cook’s distance (0.37) and an extreme standardized residual (−5.56), indicating it is the most influential observation in the dataset. A small number of other observations (observation 89 and 117) also exhibit moderately large standardized residuals and leverage values.
+
+These observations should be examined for potential data entry errors or anomalies. If no errors are identified, sensitivity analyses may be conducted by refitting the model with these observations excluded to evaluate their influence on the results.
+
+### 4.2.3 DFBETAS
+
+DFBETAS diagnostics were used to assess the influence of individual observations on each regression coefficient, with values exceeding ±2/√n considered indicative of potential influence.
+
+```{r}
+# Compute DFBETAS and display as a datatable
+library(DT)
+
+dfb <- dfbetas(m2)
+dfb_long <- dfb |> 
+  as.data.frame() |> 
+  mutate(id = row_number()) |> 
+  pivot_longer(
+    cols = -id,
+    names_to = "term",
+    values_to = "dfbeta"
+  )
+
+# Cutoff
+dfb_threshold <- 2 / sqrt(nrow(df))
+
+# Identify influential observations
+influential_dfb <- dfb_long |> 
+  filter(abs(dfbeta) > dfb_threshold) |>
+  arrange(desc(abs(dfbeta)))
+influential_dfb %>%
+  datatable()
+
+
+```
+
+Interpretation: The DFBETAS diagnostics indicate that a small number of observations exert noticeable influence on specific regression coefficients. In particular, observation 103 shows the largest DFBETAS values across multiple terms, including physical activity score, years of working experience, and the physical activity × obesity interaction, suggesting that this observation has a relatively strong impact on the estimation of these coefficients removal of this observation leads to noticeable changes in certain parameter estimates. Several other observations (89 and 117) also display moderate influence on individual predictors.
+
+### 4.2.4 Using Standardized Residuals and Leverage Value Cutoff
+
+Potential influential observations were identified based on standardized residuals greater than ±2 and leverage values exceeding the threshold of $\frac{2k + 2}{𝑛}$, where $k$ represents the number of predictors and $n$ the sample size.
+
+```{r}
+leverage_cutoff <- 2 * (length(coef(m2)) + 2) / nrow(df)
+df.inf |> 
+  filter(.std.resid > 2 | .std.resid < -2 | .hat > leverage_cutoff) |>
+  datatable()
+```
+
+We have identified 5 potential outliers based on standardized residuals and leverage cutoff. It also included the 3 influential points identified using Cook's distance and DFBETAS (Observation 89, 117, 103)
+
+## 4.3 Remedial Measures
+
+### 4.3.1 Remove outliers and refit model
+
+Influential observations were first examined for potential data entry errors or inconsistencies. As no errors were identified, sensitivity analysis were conducted by refitting the model after excluding influential observations to assess the robustness of the regression analysis.
+
+```{r}
+dfx <- df.inf |>
+   dplyr::filter(.std.resid < 2 & .std.resid > -2 & .hat < leverage_cutoff)
+
+m3 <- lm(qol ~ years_working + phys_activity*obesity, data = dfx)
+
+tidy(m3, conf.int = TRUE) |>
+  mutate(p.value = format.pval(p.value, digits = 3, eps = 0.001))
+```
+
+```{r}
+glance(m3)
+```
+
+### 4.3.2 Compare model fittness between preliminary final model with model after removing outliers
+
+-   Preliminary final model
+
+```{r}
+model_performance(m2)
+```
+
+-   Refitted model after outlier removal
+
+```{r}
+model_performance(m3)
+```
+
+-   Model comparison was done using compare_performance function
+
+```{r}
+compare_performance(m2, m3, rank = TRUE)
+```
+
+Interpretation: Comparison of model performance indicates that model 3 provides a substantially superior fit compared with model 2. Model 3 demonstrates markedly higher explanatory power, with an $R²$ of 0.715 and adjusted $R²$ of 0.709, compared with 0.540 and 0.531 for model 2. Improvements in predictive accuracy are also evident, as model 3 yields a considerably lower RMSE (8.14 vs 11.44) and reduced residual standard deviation (σ = 8.25 vs 11.59).
+
+Information-theoretic criteria further support the selection of model 3, with AIC, AICc, and BIC weights of 1.00, indicating overwhelming evidence in favour of this model among those evaluated. Consistent with these findings, model 3 achieved a performance score of 100%, while model 2 received a score of 0%.
+
+These results suggest that model 3 offers a substantially better balance of model fit and predictive performance. Although comparisons should be interpreted with caution due to potential differences in the underlying datasets, the magnitude and consistency of improvement strongly support the selection of model 3 for final inference.
+
+### 4.3.3 Compare coefficient changes after removing outliers
+
+Coefficient estimates were also compared before and after the removal of influential observations to evaluate the robustness of the regression results. This comparison allows assessment of model robustness and ensures that results are not driven by a small number of extreme cases.
+
+```{r}
+coef_compare <- tidy(m2) |>
+  dplyr::select(term, estimate) |>
+  dplyr::rename(estimate_prelim = estimate) |>
+  dplyr::left_join(
+    tidy(m3) |>
+      dplyr::select(term, estimate) |>
+      dplyr::rename(estimate_refit = estimate),
+    by = "term"
+  ) |>
+  mutate(
+    change_in_estimate = estimate_refit - estimate_prelim,
+    percent_change = (change_in_estimate / estimate_prelim) * 100
+  )
+coef_compare
+```
+
+Interpretation: Comparison of regression coefficients before and after refitting the model indicates that most estimates remain relatively stable, suggesting that the results are largely robust to the removal of influential observations. Physical activity and obesity status showed moderate sensitivity to influential observations, with coefficient changes of approximately 12% and 14%, respectively; however, the direction and substantive interpretation of both effects remained unchanged. In contrast, the physical activity–obesity interaction exhibited only minor change (≈ 6%), supporting the stability of the interaction effect. These findings support the robustness of the final model estimates.
+
+### 4.3.4 Compare model diagnostics after removing outliers
+
+```{r}
+par(mfrow = c(1,2), 
+    mar = c(5,4,4,2), 
+    oma = c(3,0,0,0))
+
+plot(m2, which = 1, main = "Original Model")
+plot(m3, which = 1, main = "Without Outliers")
+
+mtext(
+  "Figure 14: Comparison between 'Residuals vs Fitted Plot' in Oiginal Model and Without Outliers",
+  side = 1,
+  line = 1,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2
+)
+```
+
+```{r}
+# Row 2: Q-Q Plot
+par(mfrow = c(1,2), mar = c(5,4,4,2), oma = c(3, 0, 0, 0)) 
+
+plot(m2, which = 2, main = "Original Model")
+plot(m3, which = 2, main = "Without Outliers")
+
+mtext(
+  "Figure 15: Comparison between 'Q-Q Plot' in Oiginal Model and Without Outliers",
+  side = 1,
+  line = 1,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2
+)
+```
+
+```{r}
+# Row 3: Scale-Location
+par(mfrow = c(1,2), mar = c(5,4,4,2), oma = c(3, 0, 0, 0)) 
+
+plot(m2, which = 3, main = "Original Model")
+plot(m3, which = 3, main = "Without Outliers")
+
+mtext(
+  "Figure 15: Comparison between 'Scale-location Plot' in Oiginal Model and Without Outliers",
+  side = 1,
+  line = 1,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2
+)
+```
+
+```{r}
+# Row 4: Cook's Distance
+par(mfrow = c(1,2), mar = c(5,4,4,2), oma = c(3, 0, 0, 0)) 
+
+par(mfrow = c(1,2), mar = c(5,4,4,2))  # bottom, left, top, right
+plot(m2, which = 4, main = "Original Model")
+plot(m3, which = 4, main = "Without Outliers")
+
+mtext(
+  "Figure 15: Comparison between 'Q-Q Plot' in Oiginal Model and Without Outliers",
+  side = 1,
+  line = 1,
+  adj = 0,
+  outer = TRUE,
+  cex = 0.9,
+  font = 2
+)
+```
+
+**Figure 14: Comparison f Diagnostic Plots before and after outlier removal**
+
+**Interpretation:**
+
+-   **Linearity (Residual vs Fitted):** Comparison of the two plots suggests that outliers contributed to instability in the residual structure of the original model, and their removal reduced extreme residuals and improved the uniformity of residual spread, indicating better compliance with model assumptions in the refitted model.
+
+-   **Normality (Q-Q Residuals):** After removing outliers, the residuals are more symmetrically distributed with reduced tail deviations, indicating closer adherence to the normality assumption. Although minor departures remain at the extremes, overall residual behaviour is considerably improved. The outlier removal enhanced compliance with the normality assumption, supporting the validity of subsequent inference.
+
+-   **Homoscedasticity (Scale-Location):** The refitted model demonstrates a more uniform spread of residuals, with fewer extreme values and a flatter smoothing line. This pattern indicates improved homoscedasticity and resulted in a more stable variance structure, supporting the validity of the refitted model.
+
+-   **Influential Observation (Cook's Distance):** Outliers in the original model exerted substantial influence, as indicated by high Cook’s distance values. Their removal successfully reduced undue influence, resulting in a more stable and reliable regression model.
+
+**Model Checking Conclusion**
+
+Comprehensive diagnostic assessment indicated the presence of influential outliers that affected residual behaviour and model stability in the preliminary regression model. Following identification and evaluation of these observations, sensitivity analyses were conducted by refitting the model without outliers. The refitted model demonstrated improved adherence to key regression assumptions, including linearity relationship between predictors and residuals, normality of residuals, homoscedasticity, and reduced influence of individual observations. Importantly, coefficient estimates remained largely consistent in direction and substantive interpretation, indicating that the main findings were robust. Collectively, these results support the validity of the refitted model and provide confidence in the reliability of the final regression estimates.
+
+# 5 PART E: Result Presentation and Interpretation
+
+## 5.1 Final model
+
+Following comprehensive diagnostic assessment and remedial analyses, the final regression model was deemed to adequately satisfy key model assumptions, including linearity, normality of residuals, homoscedasticity, and independence. As the results were robust to the presence of influential observations, the refitted model was retained for inference. The following section presents the regression results and interprets the associations between working experience, physical activity, obesity status, and quality of life.
+
+```{r}
+
+library(gt)
+
+final_m <- tbl_regression(
+  m3,
+  intercept = TRUE,
+  label = list(years_working ~ "Working Experience in years",
+               phys_activity ~ "Physical Activity Score",
+               obesity ~ "Obesity Status")
+  ) |>
+    bold_p(t = 0.05) |>
+    bold_labels() |>
+    add_glance_table(include = c(r.squared, adj.r.squared, AIC, BIC)) |>
+    modify_fmt_fun(
+      estimate ~ function(x) style_number(x, digits = 2),
+      conf.low ~ function(x) style_number(x, digits = 2),
+      conf.high ~ function(x) style_number(x, digits = 2)) |>
+    modify_header(label = "**Variables**",
+                  estimate = "**Adj. B**",
+                  statistic = "**t-stat**") |>
+  modify_caption(
+    "<span style = 'color:black; font-weight:bold'> Table 5: Summary Table of Univariable Regresion Model</span>")
+
+final_m
+```
+
+## 5.2 Final Model Equation
+
+$\widehat{QOL} = 52.28 + 0.55(\text{Working Experience in years}) + 2.81(\text{Physical Activity Score}) - 11.15 (\text{Obese}) + - 1.84 (\text{Physical Activity Score × Obese}) + \varepsilon$
+
+## 5.3 Interpretation
+
+1.  **Model performance and overall fit:** The final model explained approximately 71% of the variability in quality of life (adjusted $R²$ = 0.71). Inclusion of the interaction term improved model fit, supporting obesity status as an important effect modifier in the relationship between physical activity and quality of life.
+
+2.  **Analysis of coefficients:**
+
+    -   **Working experience in years**
+
+        After adjustment for physical activity and obesity status, each additional year of working experience was associated with a 0.55-point increase in quality of life (95% CI: 0.44–0.66, p \< 0.001). The positive association between working experience and QOL suggests that greater work exposure may confer benefits such as financial stability, social integration, or accumulated coping resources, which together contribute to improved perceived well-being.
+
+    -   **Physical activity score**
+
+        Physical activity was also a strong positive predictor of QOL. However, its effect was not uniform across individuals. Among non-obese individuals, each one-unit increase in physical activity score was associated with an average 2.81-point increase in QOL (95% CI: 2.23 to 3.38, p \< 0.001), after adjusting for working experience and obesity status. Higher physical activity levels were associated with substantial improvements in QOL, reflecting the well-established benefits of physical activity on physical functioning, mental health, and overall vitality.
+
+    -   **Obesity status**
+
+        In contrast, obesity status was associated with a significantly lower baseline QOL, with obese individuals reporting an average 11.15-point reduction in QOL compared with non-obese individuals (95% CI: −15.76 to −6.55, p \< 0.001), after adjusting to working experience and physical activity. This finding indicate that obesity may impose physical limitations, psychosocial burdens, or comorbidity-related challenges that reduce overall well-being.
+
+    -   **Physical activity score \* obese**
+
+        A statistically significant interaction between physical activity and obesity status was observed in this analysis. The interaction term indicates that the positive association between physical activity and QOL is 1.84 points weaker per unit increase in physical activity among obese individuals compared with non-obese individuals (95% CI: −2.64 to −1.04; p \< 0.001). This suggests that although physical activity remains beneficial across both groups, its impact on QOL was reduced among obese individuals compared with non-obese individuals. This attenuation may reflect underlying health constraints, reduced functional capacity, or persistent weight-related stigma that limits the extent to which physical activity alone translates into improved quality of life.
+
+3.  **Practical implications**
+
+    The findings of this analysis have several practical implications for public health and workplace health promotion.
+
+    -   Physical activity was positively associated with quality of life across the study population, indicating that promoting physical activity remains a key strategy for improving overall well-being.
+
+    -   The magnitude of benefit from physical activity differed by obesity status, with stronger improvements observed among non-obese individuals, highlighting the importance of considering effect modification in intervention design.
+
+    -   For obese individuals, physical activity alone may be insufficient to maximise quality-of-life gains. Complementary strategies such as weight management, metabolic health optimisation, and management of comorbid conditions may be required.
+
+    -   Longer working experience was independently associated with higher quality of life, suggesting that occupational stability, accumulated skills, and workplace adaptation may play an important role in supporting well-being among working adults.
+
+    Collectively, these findings support the development of integrated and tailored public health and workplace interventions that address both lifestyle behaviours and underlying health status to improve quality of life in adult populations.
+
+4.  **Limitations Several limitations should be acknowledged.**
+
+    -   The cross-sectional design of the study limits causal inference, as temporal relationships between working experience, physical activity, obesity status, and quality of life cannot be established.
+
+    -   Physical activity and quality of life were modelled as continuous variables with linear effects, which may not fully capture potential non-linear or threshold relationships present in real-world settings.
+
+    -   Obesity status was operationalised as a binary variable, which may oversimplify heterogeneity in adiposity, metabolic risk, and health profiles within obese and non-obese groups.
+
+    -   Several potential confounders, including socioeconomic status, comorbid medical conditions, mental health factors, and workplace characteristics, were not included in the model and may have contributed to residual confounding.
+
+5.  Suggestion for improvement
+
+    -   Future studies should adopt longitudinal study designs to better assess temporal relationships and strengthen causal inference between physical activity, occupational factors, obesity, and quality of life.
+
+    -   Use of more granular measures of obesity, such as body mass index categories, waist circumference, or body composition indicators, may improve model precision and better capture heterogeneity in metabolic health.
+
+    -   Inclusion of psychosocial, socioeconomic, and occupational environment variables (e.g., income, education, job stress, workplace conditions) would provide a more comprehensive understanding of determinants of quality of life.
+
+    -   From a methodological perspective, exploring non-linear functional forms or conducting stratified analyses may help elucidate subgroup-specific effects and potential threshold relationships.
+
+    Collectively, these methodological and substantive enhancements would improve the robustness, interpretability, and real-world applicability of findings for public health and occupational health interventions.
+
+## 5.4 Model Performance Visualisation
+
+```{r, message = FALSE}
+#  Actual vs Predicted
+augmented_data <- augment(m3)
+ggplot(augmented_data, aes(x = qol, y = .fitted)) +
+  geom_point(alpha = 0.4, color = "#667eea", size = 2) +
+  geom_abline(intercept = 0, slope = 1, color = "#F57C00", 
+              linewidth = 1.2, linetype = "dashed") +
+  geom_smooth(method = "lm", se = FALSE, color = "#D32F2F", linewidth = 1) +
+  labs(title = "Actual vs Predicted QOL",
+       caption = "Figure 16: Model Performance Visualisation",
+       x = "Actual QOL",
+       y = "Predicted QOL") + 
+  theme(plot.title = element_text(face = "bold", size = 9, hjust = 0.5), 
+        plot.caption = element_text(face = "bold", size = 10, hjust = 0),
+        axis.title.x = element_text(face = "bold", size = 9),
+        axis.title.y = element_text(face = "bold", size = 9))
+```
+
+Interpretation: The observed versus predicted quality of life plot shows good agreement between predicted and actual values, with most points distributed around the line of equality. This indicates that the model captures the central tendency of the data well, with no clear evidence of systematic prediction bias. While some variability remains, the overall pattern suggests adequate model calibration and reasonable predictive accuracy.
+
+# 6 Prediction
+
+## 6.1 Create new data for prediction
+
+```{r}
+newdata <- expand.grid(
+  years_working = mean(df$years_working),
+  phys_activity = seq(0, 10, by = 0.5),
+  obesity = factor(c("not obese", "obese"),
+                   levels = c("not obese", "obese")))
+
+
+newdata |> datatable()
+```
+
+## 6.2 Generate predictions with confidence intervals using final model
+
+```{r}
+pred.qol <- augment(m3, newdata = newdata, interval = "confidence", level = 0.95)
+
+pred.qol |> datatable()
+```
+
+## 6.3 Prediction visualization
+
+```{r}
+ggplot(pred.qol, 
+       aes(x = phys_activity, 
+           y = .fitted,
+           color = obesity, 
+           fill = obesity)) +
+  geom_ribbon(
+    aes(ymin = .lower, ymax = .upper),
+    alpha = 0.2,
+    color = NA) +
+  geom_line(linewidth = 1.2) +
+  scale_color_brewer(palette = "Set2") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Predicted Effect of Physical Activity Score on Quality of Life Score",
+    subtitle = "Stratified by Obesity Status",
+    caption = "Figure 17: Prediction Visualisation",
+    x = "Physical Activity",
+    y = "Predicted QOL",
+    color = "obesity"
+    ) +
+  theme(plot.title = element_text(face = "bold", size = 9, hjust = 0.5), 
+        plot.subtitle = element_text(face = "bold", size = 8, hjust = 0.5),
+        plot.caption = element_text(face = "bold", size = 10, hjust = 0),
+        axis.title.x = element_text(face = "bold", size = 9),
+        axis.title.y = element_text(face = "bold", size = 9))
+```
+
+Interpretation: This interaction plot demonstrates that physical activity is positively associated with quality of life in both obese and non-obese individuals; however, the magnitude of benefit is greater among non-obese individuals, confirming obesity status as an important effect modifier.
+
+# 7 Conclusion
+
+This analysis examined the relationship between working experience, physical activity, obesity status, and quality of life using linear regression methods.The findings demonstrate that greater working experience and higher levels of physical activity are associated with improved quality of life, while obesity is linked to lower baseline quality of life. Importantly, the inclusion of an interaction term revealed that obesity modifies the relationship between physical activity and quality of life, with physical activity conferring greater benefits among non-obese individuals.
+
+Comprehensive diagnostic assessment and sensitivity analyses indicated that model assumptions were largely satisfied and that the main results remained remained consistent and were not affected by the presence of influential observations. Coefficient estimates remained stable after refitting the model, supporting the reliability of the findings.
+
+The findings highlights the importance of incorporating interaction effects when modelling complex health outcomes and demonstrates that behavioural factors such as physical activity may operate differently across population subgroups. These findings underscore the value of careful model specification, thorough diagnostic evaluation, and clear interpretation in applied regression analysis.
+
+Thank you.
+
+# 8 References
+
+1.  Durbin, J. and Watson, G.S. (1950). Testing for serial correlation in least squares regression I. Biometrika, 37(3–4), pp. 409–428.
+
+2.  Box, G.E.P., Jenkins, G.M., Reinsel, G.C. and Ljung, G.M. (2015). Time Series Analysis: Forecasting and Control. 5th ed. Hoboken, NJ: John Wiley & Sons.
