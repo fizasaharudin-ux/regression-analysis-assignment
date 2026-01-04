@@ -112,6 +112,9 @@ For questions or clarifications regarding this analysis:
 
 ## Course information
 **Programme:** Doctor of Public Health (DrPH)
+
 **Course:** GDT500 – Multivariable Analysis
+
 **Institution:** Universiti Sains Malaysia
-**Academic year:** 2026
+
+**Academic year:** 2025/2026
