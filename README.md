@@ -48,15 +48,14 @@ The files in this repository are organised by analysis type, with separate Quart
 ├── QOL/
 │   ├── QOL.qmd                                                           # Linear regression analysis document (Quarto source)
 │   ├── QOL.html                                                          # Rendered HTML report for linear regression
-│   ├── styles.css                                                        # custom styling for consistent report formatting
-│   └── linear_generatedata.R                                             # R script for data simulation
+│   └── styles.css                                                        # custom styling for consistent report formatting
+│   
 │
 ├── DEPRESSION/
 │   ├── Logistic Regression Analysis of Depression.qmd                     # Logistic regression analysis document (Quarto source)
 │   ├── Logistic Regression Analysis of Depression.html                    # Rendered HTML report for logistic regression
-│   ├── styles.css                                                         # custom styling for consistent report formatting
-│   └── logistic_generatedata.R                                            # R script for data simulation
-│
+│   └──  styles.css                                                         # custom styling for consistent report formatting
+│   
 ├── README.md                            # This file
 └── LICENSE                              # MIT License
 
