@@ -54,10 +54,10 @@ The files in this repository are organised by analysis type, with separate Quart
 ├── DEPRESSION/
 │   ├── Logistic Regression Analysis of Depression.qmd                     # Logistic regression analysis document (Quarto source)
 │   ├── Logistic Regression Analysis of Depression.html                    # Rendered HTML report for logistic regression
-│   └──  styles.css                                                         # custom styling for consistent report formatting
+│   └── styles.css                                                         # custom styling for consistent report formatting
 │   
-├── README.md                            # This file
-└── LICENSE                              # MIT License
+└── README.md                                                              # This file
+
 
 ```
 
@@ -95,7 +95,7 @@ The files in this repository are organised by analysis type, with separate Quart
     ```text
     r
     
-    - quarto render QOL.qmd
+    - quarto render "QOL.qmd"
     - quarto render "Logistic Regression Analysis of Depression.qmd"
     ```
 3. The rendered HTML files will reproduce all tables, figures, and outputs.
